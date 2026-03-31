@@ -1,6 +1,5 @@
-# Generated invoices and manifests (contain financial data)
-invoices/**/*.pdf
-invoices/**/*.yaml
+# Generated invoices (contain financial data)
+invoices/
 
 # Personal configuration files
 config/*.json
@@ -8,8 +7,12 @@ config/*.yaml
 config/*.yml
 
 # Build artifacts
+/invoice
 *.pdf
 !demo.gif
+
+# OS files
+.DS_Store
 
 # Scripts with personal data
 *.sh

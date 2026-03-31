@@ -73,7 +73,7 @@ func init() {
 
 	generateCmd.Flags().Float64SliceVarP(&file.Rates, "rate", "r", defaultInvoice.Rates, "Rates")
 	generateCmd.Flags().IntSliceVarP(&file.Quantities, "quantity", "q", defaultInvoice.Quantities, "Quantities")
-	generateCmd.Flags().StringSliceVarP(&file.Items, "item", "i", defaultInvoice.Items, "Items")
+	generateCmd.Flags().StringArrayVarP(&file.Items, "item", "i", defaultInvoice.Items, "Items")
 
 	generateCmd.Flags().StringVarP(&file.Logo, "logo", "l", defaultInvoice.Logo, "Company logo")
 	generateCmd.Flags().StringVarP(&file.From, "from", "f", defaultInvoice.From, "Issuing company")
@@ -126,9 +126,7 @@ var generateCmd = &cobra.Command{
 			return err
 		}
 
-		writeLogo(&pdf, file.Logo, file.From)
-		writeTitle(&pdf, file.Title, file.Id, file.Date)
-		writeBillTo(&pdf, file.To)
+		writeHeader(&pdf, file.Logo, file.From, file.Title, file.Id, file.Date, file.To)
 		writeHeaderRow(&pdf)
 		subtotal := 0.0
 		for i := range file.Items {
@@ -145,12 +143,12 @@ var generateCmd = &cobra.Command{
 			writeRow(&pdf, file.Items[i], q, r)
 			subtotal += float64(q) * r
 		}
-		if file.Note != "" {
-			writeNotes(&pdf, file.Note)
-		}
-		writeTotals(&pdf, subtotal, subtotal*file.Tax, subtotal*file.Discount)
+		writeTotals(&pdf, subtotal, subtotal*file.Tax, subtotal*file.Discount, file.Tax)
 		if file.Due != "" {
 			writeDueDate(&pdf, file.Due)
+		}
+		if file.Note != "" {
+			writeNotes(&pdf, file.Note)
 		}
 		writeFooter(&pdf, file.Id)
 		output = strings.TrimSuffix(output, ".pdf") + ".pdf"

@@ -23,86 +23,114 @@ const (
 	totalLabel    = "Total"
 )
 
-func writeLogo(pdf *gopdf.GoPdf, logo string, from string) {
+func writeHeader(pdf *gopdf.GoPdf, logo string, from string, title string, id string, date string, to string) {
+	const leftMargin = 40.0
+	const rightMargin = 555.0
+	startY := pdf.GetY()
+
+	// === RIGHT COLUMN: Company info (right-aligned) ===
+	rightY := startY
+
 	if logo != "" {
 		width, height := getImageDimension(logo)
-		scaledWidth := 100.0
+		scaledWidth := 80.0
 		scaledHeight := float64(height) * scaledWidth / float64(width)
-		_ = pdf.Image(logo, pdf.GetX(), pdf.GetY(), &gopdf.Rect{W: scaledWidth, H: scaledHeight})
-		pdf.Br(scaledHeight + 24)
+		_ = pdf.Image(logo, rightMargin-scaledWidth, rightY, &gopdf.Rect{W: scaledWidth, H: scaledHeight})
+		rightY += scaledHeight + 12
 	}
-	pdf.SetTextColor(55, 55, 55)
 
 	formattedFrom := strings.ReplaceAll(from, `\n`, "\n")
 	fromLines := strings.Split(formattedFrom, "\n")
 
-	for i := 0; i < len(fromLines); i++ {
+	pdf.SetTextColor(55, 55, 55)
+	for i, line := range fromLines {
 		if i == 0 {
-			_ = pdf.SetFont("Inter", "", 12)
-			_ = pdf.Cell(nil, fromLines[i])
-			pdf.Br(18)
+			_ = pdf.SetFont("Inter", "", 11)
 		} else {
-			_ = pdf.SetFont("Inter", "", 10)
-			_ = pdf.Cell(nil, fromLines[i])
-			pdf.Br(15)
+			_ = pdf.SetFont("Inter", "", 9)
+		}
+		w, _ := pdf.MeasureTextWidth(line)
+		pdf.SetX(rightMargin - w)
+		pdf.SetY(rightY)
+		_ = pdf.Cell(nil, line)
+		if i == 0 {
+			rightY += 16
+		} else {
+			rightY += 13
 		}
 	}
-	pdf.Br(21)
-	pdf.SetStrokeColor(225, 225, 225)
-	pdf.Line(pdf.GetX(), pdf.GetY(), 260, pdf.GetY())
-	pdf.Br(36)
-}
 
-func writeTitle(pdf *gopdf.GoPdf, title, id, date string) {
-	_ = pdf.SetFont("Inter-Bold", "", 24)
+	// === LEFT COLUMN: Title + ID + Bill To ===
+	leftY := startY
+
+	// Title
+	pdf.SetX(leftMargin)
+	pdf.SetY(leftY)
+	_ = pdf.SetFont("Inter-Bold", "", 18)
 	pdf.SetTextColor(0, 0, 0)
 	_ = pdf.Cell(nil, title)
-	pdf.Br(36)
-	_ = pdf.SetFont("Inter", "", 12)
+	leftY += 24
+
+	// ID and date
+	pdf.SetX(leftMargin)
+	pdf.SetY(leftY)
+	_ = pdf.SetFont("Inter", "", 11)
 	pdf.SetTextColor(100, 100, 100)
-	_ = pdf.Cell(nil, "#")
-	_ = pdf.Cell(nil, id)
+	_ = pdf.Cell(nil, "#"+id)
 	pdf.SetTextColor(150, 150, 150)
 	_ = pdf.Cell(nil, "  ·  ")
 	pdf.SetTextColor(100, 100, 100)
 	_ = pdf.Cell(nil, date)
-	pdf.Br(48)
+	leftY += 24
+
+	// Bill To
+	pdf.SetX(leftMargin)
+	pdf.SetY(leftY)
+	pdf.SetTextColor(75, 75, 75)
+	_ = pdf.SetFont("Inter", "", 9)
+	_ = pdf.Cell(nil, "CUSTOMER")
+	leftY += 16
+
+	formattedTo := strings.ReplaceAll(to, `\n`, "\n")
+	toLines := strings.Split(formattedTo, "\n")
+
+	for i, line := range toLines {
+		pdf.SetX(leftMargin)
+		pdf.SetY(leftY)
+		if i == 0 {
+			_ = pdf.SetFont("Inter", "", 13)
+			_ = pdf.Cell(nil, line)
+			leftY += 18
+		} else {
+			_ = pdf.SetFont("Inter", "", 9)
+			_ = pdf.Cell(nil, line)
+			leftY += 13
+		}
+	}
+
+	// Set Y to max of both columns
+	maxY := leftY
+	if rightY > maxY {
+		maxY = rightY
+	}
+	pdf.SetY(maxY)
+	pdf.SetX(leftMargin)
+
+	// Separator line
+	pdf.Br(8)
+	pdf.SetStrokeColor(225, 225, 225)
+	pdf.Line(leftMargin, pdf.GetY(), rightMargin, pdf.GetY())
+	pdf.Br(16)
 }
 
 func writeDueDate(pdf *gopdf.GoPdf, due string) {
 	_ = pdf.SetFont("Inter", "", 9)
 	pdf.SetTextColor(75, 75, 75)
-	pdf.SetX(rateColumnOffset)
 	_ = pdf.Cell(nil, "Due Date")
+	_ = pdf.SetFont("Inter-Bold", "", 9)
 	pdf.SetTextColor(0, 0, 0)
-	_ = pdf.SetFontSize(11)
-	pdf.SetX(amountColumnOffset - 15)
-	_ = pdf.Cell(nil, due)
+	_ = pdf.Cell(nil, "  "+due)
 	pdf.Br(12)
-}
-
-func writeBillTo(pdf *gopdf.GoPdf, to string) {
-	pdf.SetTextColor(75, 75, 75)
-	_ = pdf.SetFont("Inter", "", 9)
-	_ = pdf.Cell(nil, "BILL TO")
-	pdf.Br(18)
-	pdf.SetTextColor(75, 75, 75)
-
-	formattedTo := strings.ReplaceAll(to, `\n`, "\n")
-	toLines := strings.Split(formattedTo, "\n")
-
-	for i := 0; i < len(toLines); i++ {
-		if i == 0 {
-			_ = pdf.SetFont("Inter", "", 15)
-			_ = pdf.Cell(nil, toLines[i])
-			pdf.Br(20)
-		} else {
-			_ = pdf.SetFont("Inter", "", 10)
-			_ = pdf.Cell(nil, toLines[i])
-			pdf.Br(15)
-		}
-	}
-	pdf.Br(64)
 }
 
 func writeHeaderRow(pdf *gopdf.GoPdf) {
@@ -115,17 +143,17 @@ func writeHeaderRow(pdf *gopdf.GoPdf) {
 	_ = pdf.Cell(nil, "RATE")
 	pdf.SetX(amountColumnOffset)
 	_ = pdf.Cell(nil, "AMOUNT")
-	pdf.Br(24)
+	pdf.Br(18)
 }
 
 func writeNotes(pdf *gopdf.GoPdf, notes string) {
-	pdf.SetY(600)
+	pdf.Br(16)
 
-	_ = pdf.SetFont("Inter", "", 9)
-	pdf.SetTextColor(55, 55, 55)
+	_ = pdf.SetFont("Inter", "", 8)
+	pdf.SetTextColor(55, 55, 75)
 	_ = pdf.Cell(nil, "NOTES")
-	pdf.Br(18)
-	_ = pdf.SetFont("Inter", "", 9)
+	pdf.Br(14)
+	_ = pdf.SetFont("Inter", "", 8)
 	pdf.SetTextColor(0, 0, 0)
 
 	formattedNotes := strings.ReplaceAll(notes, `\n`, "\n")
@@ -133,13 +161,20 @@ func writeNotes(pdf *gopdf.GoPdf, notes string) {
 
 	for i := 0; i < len(notesLines); i++ {
 		_ = pdf.Cell(nil, notesLines[i])
-		pdf.Br(15)
+		pdf.Br(12)
 	}
 
-	pdf.Br(48)
+	pdf.Br(16)
 }
 func writeFooter(pdf *gopdf.GoPdf, id string) {
-	pdf.SetY(800)
+	// Position footer at bottom of current page
+	currentY := pdf.GetY()
+	// If we're past 750, we're near the bottom already
+	if currentY < 750 {
+		pdf.SetY(800)
+	} else {
+		pdf.Br(24) // Just add some space
+	}
 
 	_ = pdf.SetFont("Inter", "", 10)
 	pdf.SetTextColor(55, 55, 55)
@@ -150,29 +185,63 @@ func writeFooter(pdf *gopdf.GoPdf, id string) {
 }
 
 func writeRow(pdf *gopdf.GoPdf, item string, quantity int, rate float64) {
-	_ = pdf.SetFont("Inter", "", 11)
+	_ = pdf.SetFont("Inter", "", 10)
 	pdf.SetTextColor(0, 0, 0)
 
 	total := float64(quantity) * rate
 	amount := strconv.FormatFloat(total, 'f', 2, 64)
 
-	_ = pdf.Cell(nil, item)
+	// Support multiline items like from/to/notes
+	formattedItem := strings.ReplaceAll(item, `\n`, "\n")
+	itemLines := strings.Split(formattedItem, "\n")
+
+	// Write first line with all columns
+	_ = pdf.Cell(nil, itemLines[0])
 	pdf.SetX(quantityColumnOffset)
 	_ = pdf.Cell(nil, strconv.Itoa(quantity))
 	pdf.SetX(rateColumnOffset)
 	_ = pdf.Cell(nil, currencySymbols[file.Currency]+strconv.FormatFloat(rate, 'f', 2, 64))
 	pdf.SetX(amountColumnOffset)
 	_ = pdf.Cell(nil, currencySymbols[file.Currency]+amount)
-	pdf.Br(24)
+	pdf.Br(15)
+
+	// Write additional lines (item description details) with smaller font
+	if len(itemLines) > 1 {
+		_ = pdf.SetFont("Inter", "", 8)
+		pdf.SetTextColor(100, 100, 100)
+		for i := 1; i < len(itemLines); i++ {
+			_ = pdf.Cell(nil, itemLines[i])
+			pdf.Br(12)
+		}
+		pdf.SetTextColor(0, 0, 0)
+		pdf.Br(4) // Extra spacing after multiline item
+	}
 }
 
-func writeTotals(pdf *gopdf.GoPdf, subtotal float64, tax float64, discount float64) {
-	pdf.SetY(600)
+func writeTotals(pdf *gopdf.GoPdf, subtotal float64, tax float64, discount float64, taxRate float64) {
+	currentY := pdf.GetY()
+
+	// Estimate bottom section height: totals + due + notes + footer
+	// Totals: 3×18=54, Due: 12, Notes: ~70, Footer gap: ~30 = ~166
+	bottomSectionHeight := 166.0
+	if discount > 0 {
+		bottomSectionHeight += 18
+	}
+	targetY := 800 - bottomSectionHeight
+
+	if currentY > 700 {
+		pdf.AddPage()
+		pdf.SetY(100)
+	} else if currentY < targetY {
+		// Pin totals to the bottom of the page
+		pdf.SetY(targetY)
+	} else {
+		pdf.Br(16)
+	}
 
 	writeTotal(pdf, subtotalLabel, subtotal)
-	if tax > 0 {
-		writeTotal(pdf, taxLabel, tax)
-	}
+	// Always show tax with percentage, even if 0%
+	writeTotalWithRate(pdf, taxLabel, tax, taxRate)
 	if discount > 0 {
 		writeTotal(pdf, discountLabel, discount)
 	}
@@ -191,7 +260,21 @@ func writeTotal(pdf *gopdf.GoPdf, label string, total float64) {
 		_ = pdf.SetFont("Inter-Bold", "", 11.5)
 	}
 	_ = pdf.Cell(nil, currencySymbols[file.Currency]+strconv.FormatFloat(total, 'f', 2, 64))
-	pdf.Br(24)
+	pdf.Br(18)
+}
+
+func writeTotalWithRate(pdf *gopdf.GoPdf, label string, total float64, rate float64) {
+	_ = pdf.SetFont("Inter", "", 9)
+	pdf.SetTextColor(75, 75, 75)
+	pdf.SetX(rateColumnOffset)
+	// Show label with percentage
+	labelWithRate := fmt.Sprintf("%s (%.0f%%)", label, rate*100)
+	_ = pdf.Cell(nil, labelWithRate)
+	pdf.SetTextColor(0, 0, 0)
+	_ = pdf.SetFontSize(12)
+	pdf.SetX(amountColumnOffset - 15)
+	_ = pdf.Cell(nil, currencySymbols[file.Currency]+strconv.FormatFloat(total, 'f', 2, 64))
+	pdf.Br(18)
 }
 
 func getImageDimension(imagePath string) (int, int) {

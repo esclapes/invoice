@@ -1,0 +1,63 @@
+#!/bin/bash
+# Regenerate invoices from a manifest.yaml file
+# Usage: invoice-regenerate <manifest.yaml> [invoice-id]
+# If invoice-id is given, only regenerate that one invoice.
+
+set -e
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+GENERATE="$SCRIPT_DIR/invoice-generate"
+
+if [[ -z "$1" ]]; then
+    echo "Usage: invoice-regenerate <manifest.yaml> [invoice-id]"
+    echo ""
+    echo "Examples:"
+    echo "  invoice-regenerate invoices/2026/Q1/manifest.yaml"
+    echo "  invoice-regenerate invoices/2026/Q1/manifest.yaml 2026-005"
+    echo "  invoice-regenerate invoices/2026/Q1/manifest.yaml MA-2026-001"
+    exit 1
+fi
+
+MANIFEST="$1"
+FILTER_ID="${2:-}"
+
+if [[ ! -f "$MANIFEST" ]]; then
+    echo "Error: Manifest not found: $MANIFEST"
+    exit 1
+fi
+
+# Check for yq
+if ! command -v yq &> /dev/null; then
+    echo "Error: yq is required. Install with: brew install yq"
+    exit 1
+fi
+
+COUNT=$(yq '.invoices | length' "$MANIFEST")
+
+for (( i=0; i<COUNT; i++ )); do
+    ID=$(yq ".invoices[$i].id" "$MANIFEST")
+    SERIES=$(yq ".invoices[$i].series" "$MANIFEST")
+    NUMBER=$(yq ".invoices[$i].number" "$MANIFEST")
+    CLIENT=$(yq ".invoices[$i].client" "$MANIFEST")
+    DATE=$(yq ".invoices[$i].date" "$MANIFEST")
+    DUE=$(yq ".invoices[$i].due" "$MANIFEST")
+
+    # Filter by ID if specified
+    if [[ -n "$FILTER_ID" ]] && [[ "$ID" != "$FILTER_ID" ]]; then
+        continue
+    fi
+
+    # Build item flags
+    ITEM_COUNT=$(yq ".invoices[$i].items | length" "$MANIFEST")
+    ITEM_ARGS=()
+
+    for (( j=0; j<ITEM_COUNT; j++ )); do
+        DESC=$(yq ".invoices[$i].items[$j].description" "$MANIFEST")
+        QTY=$(yq ".invoices[$i].items[$j].quantity" "$MANIFEST")
+        RATE=$(yq ".invoices[$i].items[$j].rate" "$MANIFEST")
+        ITEM_ARGS+=(--item "$DESC" --quantity "$QTY" --rate "$RATE")
+    done
+
+    echo "Generating $ID..."
+    "$GENERATE" "$SERIES" "$NUMBER" "$CLIENT" "${ITEM_ARGS[@]}" --date "$DATE" --due "$DUE"
+done

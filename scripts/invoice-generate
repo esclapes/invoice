@@ -1,0 +1,140 @@
+#!/bin/bash
+# Invoice generation script that uses config files and organizes by year/quarter
+# Usage: invoice-generate <series> <number> [client] [options]
+
+set -e
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
+CONFIG_DIR="$PROJECT_DIR/config"
+INVOICES_DIR="$PROJECT_DIR/invoices"
+
+# Check if required config files exist
+if [[ ! -f "$CONFIG_DIR/company.json" ]]; then
+    echo "Error: $CONFIG_DIR/company.json not found"
+    echo "Copy config/company.example.json to config/company.json and fill in your details"
+    exit 1
+fi
+
+if [[ ! -f "$CONFIG_DIR/clients.json" ]]; then
+    echo "Error: $CONFIG_DIR/clients.json not found"
+    echo "Copy config/clients.example.json to config/clients.json and fill in client details"
+    exit 1
+fi
+
+# Parse arguments
+if [ -z "$1" ] || [ -z "$2" ]; then
+    echo "Usage: invoice-generate <series> <number> [client] [options]"
+    echo ""
+    echo "Series:"
+    echo "  normal  - Standard series (YYYY-NNN)"
+    echo "  ma      - MA series (MA-YYYY-NNN)"
+    echo ""
+    echo "Examples:"
+    echo "  invoice-generate normal 1 buffer --item \"Consulting\" --quantity 10 --rate 150"
+    echo "  invoice-generate ma 2 mundo --item \"Development\" --rate 125"
+    echo "  invoice-generate normal 3 --to \"Custom Client\\nAddress\" --item \"Service\" --rate 100"
+    exit 1
+fi
+
+SERIES="$1"
+NUMBER=$(printf "%03d" $2)
+YEAR=$(date +%Y)
+QUARTER="Q$((( $(date +%-m) - 1) / 3 + 1))"
+shift 2
+
+# Build invoice ID based on series
+if [ "$SERIES" = "ma" ]; then
+    ID="MA-${YEAR}-${NUMBER}"
+elif [ "$SERIES" = "normal" ]; then
+    ID="${YEAR}-${NUMBER}"
+else
+    echo "Error: Unknown series '$SERIES'. Use 'normal' or 'ma'"
+    exit 1
+fi
+
+# Load company config
+COMPANY_DATA=$(cat "$CONFIG_DIR/company.json")
+COMPANY_NAME=$(echo "$COMPANY_DATA" | jq -r '.name')
+TAX_ID=$(echo "$COMPANY_DATA" | jq -r '.tax_id')
+ADDRESS=$(echo "$COMPANY_DATA" | jq -r '.address')
+CITY=$(echo "$COMPANY_DATA" | jq -r '.city')
+EMAIL=$(echo "$COMPANY_DATA" | jq -r '.email')
+CURRENCY=$(echo "$COMPANY_DATA" | jq -r '.currency')
+TAX_RATE=$(echo "$COMPANY_DATA" | jq -r '.tax_rate')
+TAX_NOTE=$(echo "$COMPANY_DATA" | jq -r '.tax_note')
+LOGO=$(echo "$COMPANY_DATA" | jq -r '.logo // ""')
+
+# Build FROM field
+INVOICE_FROM="${COMPANY_NAME}\\n${TAX_ID}\\n${ADDRESS}\\n${CITY}\\n${EMAIL}"
+
+# Check if first argument is a known client
+CLIENT_ARG="$1"
+CLIENT_TO=""
+if [[ -n "$CLIENT_ARG" ]] && [[ "$CLIENT_ARG" != --* ]]; then
+    # Try to load client from config
+    CLIENT_DATA=$(echo "$(cat "$CONFIG_DIR/clients.json")" | jq -r ".\"$CLIENT_ARG\" // empty")
+    if [[ -n "$CLIENT_DATA" ]] && [[ "$CLIENT_DATA" != "null" ]]; then
+        CLIENT_NAME=$(echo "$CLIENT_DATA" | jq -r '.name')
+        CLIENT_ADDRESS=$(echo "$CLIENT_DATA" | jq -r '.address')
+        CLIENT_CITY=$(echo "$CLIENT_DATA" | jq -r '.city')
+        CLIENT_REGION=$(echo "$CLIENT_DATA" | jq -r '.region // ""')
+        CLIENT_COUNTRY=$(echo "$CLIENT_DATA" | jq -r '.country')
+        CLIENT_TAX_ID=$(echo "$CLIENT_DATA" | jq -r '.tax_id // ""')
+
+        # Build TO field
+        CLIENT_TO="${CLIENT_NAME}\\n${CLIENT_ADDRESS}\\n${CLIENT_CITY}"
+        if [[ -n "$CLIENT_REGION" ]]; then
+            CLIENT_TO="${CLIENT_TO}\\n${CLIENT_REGION}"
+        fi
+        CLIENT_TO="${CLIENT_TO}\\n${CLIENT_COUNTRY}"
+        if [[ -n "$CLIENT_TAX_ID" ]]; then
+            CLIENT_TO="${CLIENT_TO}\\n${CLIENT_TAX_ID}"
+        fi
+
+        shift # Remove client arg
+    fi
+fi
+
+# Create output directory if it doesn't exist
+OUTPUT_DIR="$INVOICES_DIR/$YEAR/$QUARTER"
+mkdir -p "$OUTPUT_DIR"
+
+# Set default output path
+OUTPUT_PATH="$OUTPUT_DIR/${ID}.pdf"
+
+# Check if user specified custom output
+if [[ "$@" =~ --output ]] || [[ "$@" =~ -o ]]; then
+    OUTPUT_PATH=""  # Let user's flag take precedence
+fi
+
+# Build invoice command as array to preserve quoting
+CMD=(invoice generate --id "$ID" --from "$INVOICE_FROM" --currency "$CURRENCY" --tax "$TAX_RATE")
+
+# Add logo if specified
+if [[ -n "$LOGO" ]]; then
+    CMD+=(--logo "$LOGO")
+fi
+
+# Add client TO if found
+if [[ -n "$CLIENT_TO" ]]; then
+    CMD+=(--to "$CLIENT_TO")
+fi
+
+# Add tax note if specified
+if [[ -n "$TAX_NOTE" ]] && [[ "$TAX_NOTE" != "null" ]]; then
+    CMD+=(--note "$TAX_NOTE")
+fi
+
+# Add remaining user arguments
+CMD+=("$@")
+
+# Add output path if not specified by user
+if [[ -n "$OUTPUT_PATH" ]]; then
+    CMD+=(--output "$OUTPUT_PATH")
+fi
+
+# Execute command
+"${CMD[@]}"
+
+echo "Invoice saved to: $OUTPUT_PATH"

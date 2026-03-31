@@ -1,6 +1,18 @@
+# Generated invoices and manifests (contain financial data)
+invoices/**/*.pdf
+invoices/**/*.yaml
+
+# Personal configuration files
+config/*.json
+config/*.yaml
+config/*.yml
+
+# Build artifacts
 *.pdf
-*.json
-*.yaml
-*.yml
+!demo.gif
+
+# Scripts with personal data
 *.sh
+
+# Keep GitHub workflows
 !.github/workflows/*.yml

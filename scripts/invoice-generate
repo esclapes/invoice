@@ -39,9 +39,33 @@ fi
 
 SERIES="$1"
 NUMBER=$(printf "%03d" $2)
-YEAR=$(date +%Y)
-QUARTER="Q$((( $(date +%-m) - 1) / 3 + 1))"
 shift 2
+
+# Determine filing year/quarter from the INVOICE date (--date), not when the
+# command runs. Falls back to today if --date is absent or unparseable.
+INVOICE_DATE=""
+prev=""
+for arg in "$@"; do
+    if [[ "$prev" == "--date" ]]; then
+        INVOICE_DATE="$arg"
+        break
+    fi
+    prev="$arg"
+done
+
+PARSED=""
+if [[ -n "$INVOICE_DATE" ]]; then
+    PARSED=$(date -j -f "%b %d, %Y" "$INVOICE_DATE" +"%Y %m" 2>/dev/null || true)
+fi
+if [[ -n "$PARSED" ]]; then
+    YEAR="${PARSED% *}"
+    MONTH=$((10#${PARSED#* }))
+else
+    [[ -n "$INVOICE_DATE" ]] && echo "Warning: couldn't parse --date '$INVOICE_DATE'; filing under today's date." >&2
+    YEAR=$(date +%Y)
+    MONTH=$(date +%-m)
+fi
+QUARTER="Q$(( (MONTH - 1) / 3 + 1 ))"
 
 # Build invoice ID based on series
 if [ "$SERIES" = "ma" ]; then

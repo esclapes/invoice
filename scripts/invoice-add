@@ -1,0 +1,146 @@
+#!/bin/bash
+# invoice-add — the DEFAULT way to create an invoice.
+#
+# Appends a new entry to the quarter's manifest.yaml with an auto-incremented,
+# then-frozen ID, then generates the PDF from that manifest (single source of
+# truth). The manifest stays authoritative for accountancy/regeneration.
+#
+# For a quick one-off PDF that should NOT be recorded (e.g. a preview), use
+# scripts/invoice-generate instead.
+#
+# Usage: invoice-add <series> <client> [flags]
+#   series : normal | ma
+#   client : key from config/clients.json
+#   flags  : --item/-i, --quantity/-q, --rate/-r  (repeatable; paired by order)
+#            --date "May 12, 2026"  (default: today)
+#            --due  "May 12, 2026"  (default: same as --date)
+#
+# Examples:
+#   invoice-add ma mundo -i "Assistant work" -q 3 -r 45 --date "May 12, 2026"
+#   invoice-add normal buffer -i "Software Development Services" -q 1 -r 5750.58
+
+set -e
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
+INVOICES_DIR="$PROJECT_DIR/invoices"
+REGENERATE="$SCRIPT_DIR/invoice-regenerate"
+
+command -v yq >/dev/null 2>&1 || { echo "Error: yq is required (brew install yq)"; exit 1; }
+command -v jq >/dev/null 2>&1 || { echo "Error: jq is required (brew install jq)"; exit 1; }
+
+if [[ -z "$1" || -z "$2" ]]; then
+    echo "Usage: invoice-add <series> <client> [flags]"
+    echo ""
+    echo "  series : normal | ma"
+    echo "  client : key from config/clients.json"
+    echo "  flags  : --item/-i, --quantity/-q, --rate/-r (repeatable), --date, --due"
+    echo ""
+    echo "Example:"
+    echo "  invoice-add ma mundo -i \"Assistant work\" -q 3 -r 45 --date \"May 12, 2026\""
+    exit 1
+fi
+
+SERIES="$1"
+CLIENT="$2"
+shift 2
+
+case "$SERIES" in
+    normal|ma) ;;
+    *) echo "Error: unknown series '$SERIES' (use 'normal' or 'ma')"; exit 1 ;;
+esac
+
+# Parse the supported flags. Anything else is rejected — invoice-add only knows
+# how to record fields it can also write to the manifest. Use invoice-generate
+# for ad-hoc flags.
+ITEMS=(); QTYS=(); RATES=(); DATE=""; DUE=""
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --item|-i)     ITEMS+=("$2"); shift 2 ;;
+        --quantity|-q) QTYS+=("$2");  shift 2 ;;
+        --rate|-r)     RATES+=("$2"); shift 2 ;;
+        --date)        DATE="$2";     shift 2 ;;
+        --due)         DUE="$2";      shift 2 ;;
+        *)
+            echo "Error: unsupported flag '$1' for invoice-add."
+            echo "Supported: --item/-i --quantity/-q --rate/-r --date --due"
+            echo "For one-off flags, use scripts/invoice-generate (preview, not recorded)."
+            exit 1
+            ;;
+    esac
+done
+
+[[ ${#ITEMS[@]} -gt 0 ]] || { echo "Error: at least one --item is required"; exit 1; }
+
+# Defaults: date = today (e.g. 'May 12, 2026'); due = date.
+[[ -n "$DATE" ]] || DATE="$(date +"%b %d, %Y")"
+[[ -n "$DUE"  ]] || DUE="$DATE"
+
+# Derive filing year/quarter from the invoice date.
+PARSED=$(date -j -f "%b %d, %Y" "$DATE" +"%Y %m" 2>/dev/null || true)
+if [[ -z "$PARSED" ]]; then
+    echo "Error: couldn't parse --date '$DATE'. Use a format like 'May 12, 2026'."
+    exit 1
+fi
+YEAR="${PARSED% *}"
+MONTH=$((10#${PARSED#* }))
+QUARTER="Q$(( (MONTH - 1) / 3 + 1 ))"
+
+# Next number is per-series, per-YEAR (not per-quarter): scan every quarter's
+# manifest for this year and take max(number)+1 for this series.
+MAX=0
+for m in "$INVOICES_DIR/$YEAR"/*/manifest.yaml; do
+    [[ -f "$m" ]] || continue
+    n=$(yq "[.invoices[] | select(.series == \"$SERIES\") | .number] | max // 0" "$m" 2>/dev/null || echo 0)
+    [[ "$n" =~ ^[0-9]+$ ]] || n=0
+    (( n > MAX )) && MAX=$n
+done
+NUMBER=$(( MAX + 1 ))
+PADDED=$(printf "%03d" "$NUMBER")
+
+if [[ "$SERIES" == "ma" ]]; then
+    ID="MA-${YEAR}-${PADDED}"
+else
+    ID="${YEAR}-${PADDED}"
+fi
+
+MANIFEST="$INVOICES_DIR/$YEAR/$QUARTER/manifest.yaml"
+mkdir -p "$(dirname "$MANIFEST")"
+[[ -f "$MANIFEST" ]] || echo "invoices: []" > "$MANIFEST"
+
+# Guard against a duplicate ID already present in this quarter's manifest.
+if [[ "$(yq "[.invoices[] | select(.id == \"$ID\")] | length" "$MANIFEST")" != "0" ]]; then
+    echo "Error: $ID already exists in $MANIFEST"
+    exit 1
+fi
+
+# Build the items array as JSON (jq handles escaping, incl. literal \n).
+ITEMS_JSON="[]"
+for idx in "${!ITEMS[@]}"; do
+    q="${QTYS[$idx]:-1}"
+    r="${RATES[$idx]:-0}"
+    ITEMS_JSON=$(jq -c \
+        --arg d "${ITEMS[$idx]}" \
+        --argjson q "$q" \
+        --argjson r "$r" \
+        '. + [{description:$d, quantity:$q, rate:$r}]' <<< "$ITEMS_JSON")
+done
+
+ENTRY_JSON=$(jq -cn \
+    --arg id "$ID" --arg series "$SERIES" --argjson number "$NUMBER" \
+    --arg client "$CLIENT" --arg date "$DATE" --arg due "$DUE" \
+    --argjson items "$ITEMS_JSON" \
+    '{id:$id, series:$series, number:$number, client:$client, date:$date, due:$due, items:$items}')
+
+# Append the entry to the manifest (JSON is valid YAML, so yq load() ingests it).
+# `(.invoices[-1] | ...) style = ""` forces the appended entry into readable
+# block style (keys + values) instead of the inline flow style JSON carries in.
+TMP=$(mktemp)
+printf '%s' "$ENTRY_JSON" > "$TMP"
+yq -i ".invoices += [load(\"$TMP\")] | (.invoices[-1] | ...) style = \"\"" "$MANIFEST"
+rm -f "$TMP"
+
+echo "Added $ID to $MANIFEST"
+
+# Generate the PDF from the manifest — the manifest is the source of truth.
+"$REGENERATE" "$MANIFEST" "$ID"

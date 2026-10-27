@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"image"
+	"math"
 	"os"
 	"strconv"
 	"strings"
@@ -184,11 +185,16 @@ func writeFooter(pdf *gopdf.GoPdf, id string) {
 	pdf.Br(48)
 }
 
-func writeRow(pdf *gopdf.GoPdf, item string, quantity int, rate float64) {
+// lineTotal rounds each line to cents so the printed amounts add up to the subtotal.
+func lineTotal(quantity, rate float64) float64 {
+	return math.Round(quantity*rate*100) / 100
+}
+
+func writeRow(pdf *gopdf.GoPdf, item string, quantity float64, rate float64) {
 	_ = pdf.SetFont("Inter", "", 10)
 	pdf.SetTextColor(0, 0, 0)
 
-	total := float64(quantity) * rate
+	total := lineTotal(quantity, rate)
 	amount := strconv.FormatFloat(total, 'f', 2, 64)
 
 	// Support multiline items like from/to/notes
@@ -198,7 +204,7 @@ func writeRow(pdf *gopdf.GoPdf, item string, quantity int, rate float64) {
 	// Write first line with all columns
 	_ = pdf.Cell(nil, itemLines[0])
 	pdf.SetX(quantityColumnOffset)
-	_ = pdf.Cell(nil, strconv.Itoa(quantity))
+	_ = pdf.Cell(nil, strconv.FormatFloat(quantity, 'f', -1, 64))
 	pdf.SetX(rateColumnOffset)
 	_ = pdf.Cell(nil, currencySymbols[file.Currency]+strconv.FormatFloat(rate, 'f', 2, 64))
 	pdf.SetX(amountColumnOffset)
